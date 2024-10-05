@@ -49,7 +49,6 @@ void parallel_histogram(float *array, int n, int *bins, int num_bins)
         int start = thread_rank*local_n;
         int end_ = start+local_n;
         int end = n>end_?end_:n;
-        // printf("pthrdad%d, start:%d, end:%d\n", omp_get_thread_num(), start, end);
 
         int *local_bins = (int*)malloc(num_bins * sizeof(int));
         for (i = 0; i < num_bins; i++) {
@@ -66,68 +65,15 @@ void parallel_histogram(float *array, int n, int *bins, int num_bins)
             local_bins[idx]++;
         }
 
-        
+        # pragma omp critical
         for(i = 0; i < num_bins; i++){
-            # pragma omp atomic
+            // # pragma omp atomic
             bins[i] += local_bins[i];
         }
         free(local_bins);
-    }
-
-    // if ((NUM_THREADS - 1)*local_n < n)
-    // {
-    //     for(i = (NUM_THREADS - 1)*local_n; i < n; i++){
-    //         int val = (int)array[i];
-    //         if (val == num_bins) { /* Ensure 10 numbers go to the last bin */
-    //             idx = num_bins - 1;
-    //         } else {
-    //             idx = val % num_bins;
-    //         }
-    //         bins[idx]++;
-    //     }
-    // }
-    
-    
+    } 
 }
 
-// void parallel_histogram(float *array, int n, int *bins, int num_bins)
-// {
-//     int i;
-//     /* Initialize the bins as zero */
-//     for (i = 0; i < num_bins; i++) {
-//         bins[i] = 0; 
-//     }
-//     /* Counting */
-//     int idx;
-//     int local_n = n / NUM_THREADS;
-
-//     # pragma omp parallel num_threads(NUM_THREADS)\
-//         shared(bins, local_n, array, n, num_bins) private(idx, i)
-//     {
-//         int *local_bins = (int*)malloc(num_bins * sizeof(int));
-//         for (i = 0; i < num_bins; i++) {
-//             local_bins[i] = 0;
-//         }
-
-//         # pragma omp for schedule(static, n/(NUM_THREADS*2))
-//         for (i = 0; i < n; i++) {
-//             int val = (int)array[i];
-//             if (val == num_bins) { /* Ensure 10 numbers go to the last bin */
-//                 idx = num_bins - 1;
-//             } else {
-//                 idx = val % num_bins;
-//             }
-//             local_bins[idx]++;
-//         }
-
-//         # pragma omp critical
-//         for(i = 0; i < num_bins; i++){
-//             bins[i] += local_bins[i];
-//         }
-//         free(local_bins);
-//     }
-    
-// }
 
 void parallel_histogram_task(float *array, int n, int *bins, int num_bins)
 {
@@ -143,29 +89,25 @@ void parallel_histogram_task(float *array, int n, int *bins, int num_bins)
 
     /* Counting */
     int idx;
-    # pragma omp parallel num_threads(NUM_THREADS)
+    # pragma omp parallel num_threads(NUM_THREADS) \
+        shared(bins, array, num_bins)
     {
         # pragma omp single
         {
-            int local_n = n / NUM_THREADS;
+            int local_n = n / NUM_THREADS + 1;
 
             for(i = 0; i < n; i+=local_n){
                 int start = i;
                 int end_ = start+local_n;
                 int end = n>end_?end_:n;
-                // printf("thrdad%d, start:%d, end:%d\n", omp_get_thread_num(), start, end);
 
                 # pragma omp task \
-                    shared(array, num_bins, bins) firstprivate(start, end)
+                    shared(array, bins) firstprivate(start, end) private(i, idx)
                 {
-                    printf("pthrdad%d, start:%d, end:%d\n", omp_get_thread_num(), start, end);
-                    int *local_bins = (int*)malloc(num_bins * sizeof(int));    //每个线程都有自己的bin
-                    for (i = 0; i < num_bins; i++) {
-                        local_bins[i] = 0; 
-                    }
+                    int *local_bins = (int*)calloc(num_bins, sizeof(int));    //每个线程都有自己的bin
 
-                    for(int j = start; j < end; j++){
-                        int val = (int)array[j];
+                    for(i = start; i < end; i++){
+                        int val = (int)array[i];
                         if (val == num_bins) { /* Ensure 10 numbers go to the last bin */
                             idx = num_bins - 1;
                         } else {
@@ -175,14 +117,18 @@ void parallel_histogram_task(float *array, int n, int *bins, int num_bins)
                     }
 
                     # pragma omp critical
-                    for(i = 0; i < num_bins; i++){
-                        bins[i] += local_bins[i];
+                    {
+                        for(i = 0; i < num_bins; i++){
+                            bins[i] += local_bins[i];
+                        }
                     }
+                    
                     free(local_bins);
                 }
             }
-            # pragma omp taskwait
-        }        
+            // # pragma omp taskwait
+        }
+
     }
     
 }
@@ -220,10 +166,8 @@ int main(int argc, char* argv[])
     double send = omp_get_wtime();
 
     double pstart = omp_get_wtime();
-    // # pragma omp parallel num_threads(NUM_THREADS) \
-    //     // shared(array, n, pbins, num_bins)
-        parallel_histogram(array, n, pbins, num_bins);
-    
+    // parallel_histogram_task(array, n, pbins, num_bins);
+    parallel_histogram(array, n, pbins, num_bins);
     double pend = omp_get_wtime();
     
     int i;
