@@ -48,27 +48,42 @@ __global__ void MatrixTranseKernelShared(int *d_M, int *d_P, int m, int n)
   //Identify the row and column of the Pd element to work on
   int col = bx * TILE_WIDTH + tx;
   int row = by * TILE_WIDTH + ty;
+  // int total = m*n;
 
   //loop over the Md and Nd tiles required to compute the Pd element
-  if(row < m && col < n){
-    ds_M[ty][tx] = d_M[row*n+col];
-  }
+  // if(row < m && col < n){
+  //   ds_M[ty][tx] = d_M[row*n+col];
+  // }
+  
+  ds_M[ty][tx] = (row < m && col < n) * d_M[row*n + col];
+  __syncthreads();
 
+  // if(row < m && col < n){
+  //   printf("%d ", ds_M[row][col]);
+  // }
+
+  // 这里对d_P的访问是聚合的
   row = bx * TILE_WIDTH + ty;
   col = by * TILE_WIDTH + tx;
-  if(row < n && col < m)
-    d_P[row*m+col] = ds_M[tx][ty];
+  d_P[row*m+col] = (row < n && col < m) * ds_M[tx][ty];
+  // if(row < n && col < m)
+  //   d_P[row*m+col] = ds_M[tx][ty];
 
-  // 比没共享内存还慢
-  // if(row < m && col < n)
-  //   d_P[col*m+row] = ds_M[ty][tx];
+  // 这里对d_P的访问不是聚合的
+  // row = bx * TILE_WIDTH + tx;
+  // col = by * TILE_WIDTH + ty;
+  // if(row < n && col < m)
+  //   d_P[row*m+col] = ds_M[ty][tx];
 }
+
+// 1 0 1 0     
+
 
 
 int main()
 {
   //freopen("out","w",stdout);
-  int m = 4, n = 10;
+  int m = 40000, n = 40000;
   int *h_M, *t_M, *d_M, *d_P, *h_P, *h_PS;
 
   size_t sizeM = m * n * sizeof(int);
@@ -95,20 +110,20 @@ int main()
   float gElapsedTime, cElapsedTime;
 
   // GPU Transe without SharedMemory
-  // CHECK(cudaEventCreate(&start));
-  // CHECK(cudaEventCreate(&stop));
-  // CHECK(cudaEventRecord(start,0));
+  CHECK(cudaEventCreate(&start));
+  CHECK(cudaEventCreate(&stop));
+  CHECK(cudaEventRecord(start,0));
 
   dim3 grid((int)ceil(n*1.0/ TILE_WIDTH), (int)ceil(m*1.0/ TILE_WIDTH));
   dim3 block(TILE_WIDTH, TILE_WIDTH);
-  // MatrixTranseKernel<<<grid,block>>>(d_M, d_P, m, n);
+  MatrixTranseKernel<<<grid,block>>>(d_M, d_P, m, n);
 
-  // CHECK(cudaEventRecord(stop,0));
-  // CHECK(cudaEventSynchronize(stop));
-  // CHECK(cudaEventElapsedTime(&gElapsedTime,start,stop));
-  // printf("Kernel Elpased Time without SharedMemory: %.3f ms\n",gElapsedTime);
+  CHECK(cudaEventRecord(stop,0));
+  CHECK(cudaEventSynchronize(stop));
+  CHECK(cudaEventElapsedTime(&gElapsedTime,start,stop));
+  printf("Kernel Elpased Time without SharedMemory: %.3f ms\n",gElapsedTime);
 
-  // CHECK(cudaMemcpy(h_P,d_P,sizeM,cudaMemcpyDeviceToHost));
+  CHECK(cudaMemcpy(h_P,d_P,sizeM,cudaMemcpyDeviceToHost));
 
 
   // GPU Transe with SharedMemory
@@ -145,31 +160,43 @@ int main()
 
   printf("SpeedUp:%f\n", cElapsedTime/gElapsedTime);
 
-  printf("h_PS:\n");
-  for(int i = 0; i < n; i++){
-    for(int j = 0; j < m; j++){
-      printf("%d ", h_PS[i*m + j]);
-    }
-    printf("\n");
-  }
+  // printf("h_PS:\n");
+  // for(int i = 0; i < n; i++){
+  //   for(int j = 0; j < m; j++){
+  //     printf("%d ", h_PS[i*m + j]);
+  //   }
+  //   printf("\n");
+  // }
 
-  printf("\nt_M:\n");
-  for(int i = 0; i < n; i++){
-    for(int j = 0; j < m; j++){
-      printf("%d ", t_M[i*m + j]);
-    }
-    printf("\n");
-  }
+  // printf("\nt_M:\n");
+  // for(int i = 0; i < n; i++){
+  //   for(int j = 0; j < m; j++){
+  //     printf("%d ", t_M[i*m + j]);
+  //   }
+  //   printf("\n");
+  // }
   
   for(int i = 0; i < n*m; ++i){
     if(t_M[i] != h_P[i]){
         printf("1 compute error\n");
+        free(h_P);
+        free(h_PS);
+        free(h_M);
+        free(t_M);
+        cudaFree(d_P);
+        cudaFree(d_M);
         return -1;
     }
   }
   for(int i = 0; i < n*m; ++i){
     if(t_M[i] != h_PS[i]){
         printf("2 compute error\n");
+        free(h_P);
+        free(h_PS);
+        free(h_M);
+        free(t_M);
+        cudaFree(d_P);
+        cudaFree(d_M);
         return -1;
     }
   }
