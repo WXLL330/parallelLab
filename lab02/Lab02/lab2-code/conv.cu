@@ -67,10 +67,78 @@ __global__ void ConvKernel(int *d_M, int *d_K, int *d_N, int m, int n, int k)
     //     d_P[row * k + col] = pValue;
 }
 
+
+__global__ void ConvKernelShared(int *d_M, int *d_K, int *d_N, int m, int n, int k)
+{
+    __shared__ int ds_K[TILE_WIDTH][TILE_WIDTH];
+    // __shared__ int ds_N[TILE_WIDTH][TILE_WIDTH];
+
+    int bx = blockIdx.x;
+    int by = blockIdx.y;
+
+    int tx = threadIdx.x;
+    int ty = threadIdx.y;
+
+    //Identify the row and column of the Pd element to work on
+    int row = by * TILE_WIDTH + ty;
+    int col = bx * TILE_WIDTH + tx;
+
+    int pValue = 0;
+    int m_ = m - k + 1;
+    int n_ = n - k + 1;
+
+    if(ty < k && tx < k)
+        ds_K[ty][tx] = d_K[ty*k + tx];
+
+    
+    for(int i = 0; i < k; ++i){
+        for(int j = 0; j < k; ++j){
+            pValue += ((row+i)<m && (col+j)<n) * d_M[(row+i)*n + col + j] * ds_K[i][j];
+        }
+    }
+    
+    if(row < m_ && col < n_)
+        d_N[row*n_ + col] = pValue;
+
+
+
+    //loop over the Md and Nd tiles required to comput the Pd element
+    // for(int t = 0; t < (n-1) / TILE_WIDTH + 1; ++t)
+    // {
+    //     if(row < m && t * TILE_WIDTH + tx < n)
+    //     ds_M[ty][tx] = d_M[row * n + t * TILE_WIDTH + tx];
+    //     else
+    //     ds_M[ty][tx] = 0;
+
+    //     __syncthreads();
+
+    //     for(int i = 0; i < TILE_WIDTH; ++i)
+    //     pValue += ds_M[ty][i] * ds_N[i][tx];
+    //     __syncthreads();
+    // }
+    // if(row < m && col < k)
+    //     d_P[row * k + col] = pValue;
+}
+
+// 1 2 3 1 2     a  b  c
+// 4 5 6 1 2     d  e  f
+// 7 8 9 1 2     g  h  i
+// 1 1 1 1 2
+// 2 2 2 2 2
+
 int main()
 {
     //freopen("out","w",stdout);
-    int m = 50, n = 90000, k = 5;
+    int m, n, k;
+
+    FILE *input = fopen("input3.txt", "r");
+    if (input == NULL){
+        printf("Error opening input file.\n");
+        exit(1);
+    }
+    fscanf(input, "%d%d%d", &m, &n, &k);
+    fclose(input);
+
     int m_ = m - k + 1;
     int n_ = n - k + 1;
 
@@ -115,6 +183,7 @@ int main()
     dim3 grid((int)ceil(n_*1.0 / TILE_WIDTH), (int)ceil(m_*1.0/ TILE_WIDTH));
     dim3 block(TILE_WIDTH,TILE_WIDTH);
     ConvKernel<<<grid,block>>>(d_M, d_K, d_N, m, n, k);
+    // ConvKernelShared<<<grid,block>>>(d_M, d_K, d_N, m, n, k);
 
     CHECK(cudaEventRecord(stop,0));
     //cudaDeviceSynchronize();
@@ -177,17 +246,18 @@ int main()
     for(int i = 0; i < m_*n_; ++i){
         if(h_N[i] != h_P[i]){
             printf("compute error, i: %d, cpu: %d, gpu: %d\n", i, h_N[i], h_P[i]);
-            free(h_P);
-            free(h_K);
-            free(h_M);
-            free(h_N);
-            CHECK(cudaFree(d_K));
-            CHECK(cudaFree(d_M));
-            CHECK(cudaFree(d_N));
-            return -1;
+            exit(1);
         }
     }
     printf("compute correct\n");
+
+    FILE *output = fopen("output3.txt", "w");
+    if (output == NULL){
+        printf("Error opening output file.\n");
+        exit(1);
+    }
+    fprintf(output, "%.2f,%.2f\n", cElapsedTime, gElapsedTime);
+    fclose(output);
 
 
     free(h_P);
