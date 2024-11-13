@@ -35,10 +35,11 @@ void gen_vector(int size, double *vec, int seed)
 // 再 numprocs - 1 次之后每个进程就有了完全allreduce之后的向量
 void RING_Allreduce(double *sendbuf, double *recvbuf, int count, MPI_Datatype datatype, MPI_Op op, MPI_Comm comm)
 {
-    int numprocs, id;
+    int numprocs, id, acc = 0;
     MPI_Comm_size(MPI_COMM_WORLD, &numprocs);
     MPI_Comm_rank(MPI_COMM_WORLD, &id);
-    MPI_Request request;
+
+    MPI_Request send_request, recv_request;
     for(int i = 0; i < count; ++i){
         recvbuf[i] = sendbuf[i];
     }
@@ -48,44 +49,34 @@ void RING_Allreduce(double *sendbuf, double *recvbuf, int count, MPI_Datatype da
     int times = (numprocs - 1);
     int dest = (id + 1) % numprocs; // 后一个
     int src = abs((id - 1 + numprocs) % numprocs); // 前一个
-    int sendoffset = id*snum, recvoffset = src*snum;
+    int sendoffset = id * snum, recvoffset = src * snum;
     for(int i = 0; i < times; ++i){
-        // send to dest
         slen = (sendoffset != (numprocs - 1)*snum) ? snum : snum_last;
-        MPI_Isend(recvbuf+sendoffset, slen, datatype, dest, 0, comm, &request);
-
-        // recv from src
         rlen = (recvoffset != (numprocs - 1)*snum) ? snum : snum_last;
-        MPI_Recv(recvbuf+recvoffset, rlen, datatype, src, 0, comm, MPI_STATUS_IGNORE);
-        // printf("process%d recv [%d]=%lf from process%d\n", id, recvoffset, recvbuf[recvoffset], src);
-    
-        if(op == MPI_SUM){
-            for(int j = 0; j < rlen; ++j)
+
+        MPI_Sendrecv(recvbuf+sendoffset, slen, datatype, dest, 0, 
+                    recvbuf+recvoffset, rlen, datatype, src, 0, comm, MPI_STATUS_IGNORE);
+
+        for(int j = 0; j < rlen; ++j){
+            if(op == MPI_SUM){
                 recvbuf[recvoffset + j] += sendbuf[recvoffset + j];
-        }
-        else if(op == MPI_MAX){
-            for(int j = 0; j < rlen; ++j)
+            }
+            else if(op == MPI_MAX){
                 recvbuf[recvoffset + j] = sendbuf[recvoffset + j] > recvbuf[recvoffset + j]? sendbuf[recvoffset + j] : recvbuf[recvoffset + j];
+            }
         }
-        
-        // printf("process%d: slen=%d, sendoffset=%d, recvoffset=%d\n", id, slen, sendoffset, recvoffset);
+
         sendoffset = recvoffset;
         recvoffset = ((recvoffset - snum) < 0) ? (numprocs - 1)*snum : recvoffset - snum;
     }
     
     for(int i = 0; i < times; ++i){
-        // send to dest
         slen = (sendoffset != (numprocs - 1)*snum) ? snum : snum_last;
-        // printf("process%d: sendoffset=%d, recvoffset=%d, send %d val to process%d\n", id, sendoffset, recvoffset, slen, dest);
-        MPI_Isend(recvbuf+sendoffset, slen, datatype, dest, 0, comm, &request);
-
-        // recv from src
         rlen = (recvoffset != (numprocs - 1)*snum) ? snum : snum_last;
-
-        // printf("process%d: sendoffset=%d, recvoffset=%d, recv %d val from process%d\n", id, sendoffset, recvoffset, rlen, src);
-        MPI_Recv(recvbuf+recvoffset, rlen, datatype, src, 0, comm, MPI_STATUS_IGNORE);
         
-        // printf("process%d: slen=%d, sendoffset=%d, recvoffset=%d, sum=%f\n", id, slen, sendoffset, recvoffset, recvbuf[recvoffset]);
+        MPI_Sendrecv(recvbuf+sendoffset, slen, datatype, dest, 0, 
+                    recvbuf+recvoffset, rlen, datatype, src, 0, comm, MPI_STATUS_IGNORE);
+
         sendoffset = recvoffset;
         recvoffset = ((recvoffset - snum) < 0) ? (numprocs - 1)*snum : recvoffset - snum;
     }
@@ -167,16 +158,16 @@ int main(int argc, char **argv)
         printf("Normal Allreduce runtime: %f\n", ntime);
         printf("Speedup: %f\n", ntime / rtime);
 
-        // printf("ring: ");
-        // for(int i = 0; i < n; ++i){
-        //     printf("%lf ", x[i]);
-        // }
-        // printf("\n");
-        // printf("norm: ");
-        // for(int i = 0; i < n; ++i){
-        //     printf("%lf ", y[i]);
-        // }
-        // printf("\n");
+        printf("ring: ");
+        for(int i = 0; i < n; ++i){
+            printf("%lf ", x[i]);
+        }
+        printf("\n");
+        printf("norm: ");
+        for(int i = 0; i < n; ++i){
+            printf("%lf ", y[i]);
+        }
+        printf("\n");
 
         for(int i = 0; i < n; ++i){
             if(abs(x[i] - y[i]) > 5e-5){

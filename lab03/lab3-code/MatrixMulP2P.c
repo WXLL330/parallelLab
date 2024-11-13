@@ -4,7 +4,6 @@
 #include <math.h>
 #include "time.h"
 
-// 当 m < numprocs 时，寄，最后一个进程算所有
 
 struct mystruct {
     int m;
